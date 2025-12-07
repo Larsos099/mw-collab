@@ -8,15 +8,15 @@ if(DEFINED CMAKE_TOOLCHAIN_FILE)
 endif()
 
 find_package(OpenSSL REQUIRED)
-if(OpenSSL_FOUND)
-    message(STATUS "OpenSSL found")
-    message(STATUS "Using OpenSSL v${OpenSSL_VERSION}")
-endif()
-target_link_libraries(malware PRIVATE OpenSSL::SSL)
-target_link_libraries(malware PRIVATE OpenSSL::Crypto)
 
-file(GLOB CONFIGURE_DEPENDS SOURCES
-        "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/*.hpp"
-)
+if(OPENSSL_FOUND)
+    message(STATUS "OpenSSL found")
+endif()
+
+aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR} SOURCES)
+
+message(STATUS "Sources: ${SOURCES}")
+
 add_executable(malware ${SOURCES})
+
+target_link_libraries(malware PRIVATE OpenSSL::SSL OpenSSL::Crypto)
