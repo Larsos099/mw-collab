@@ -35,6 +35,30 @@ OpenSSLToolkit::md_ctx_ptr OpenSSLToolkit::make_md_ctx_ptr(EVP_MD_CTX *ptr) {
   };
 }
 
+unsigned char* OpenSSLToolkit::takeBytesErase(unsigned char* data, const int start, const int count) {
+  if (!data || start < 0 || count <= 0) return nullptr;
+
+  unsigned char* d = static_cast<unsigned char *>(std::malloc(count));
+  if (!d) return nullptr;
+
+  std::memcpy(d, data + start, count);
+  OPENSSL_cleanse(data + start, count);
+
+  return d;
+}
+
+unsigned char* OpenSSLToolkit::takeBytes(const unsigned char *data, const int start, const int count) {
+  if (!data || start < 0 || count <= 0) return nullptr;
+
+  unsigned char* d = static_cast<unsigned char *>(std::malloc(count));
+  if (!d) return nullptr;
+
+  std::memcpy(d, data + start, count);
+
+  return d;
+}
+
+
 const EVP_MD *OpenSSLToolkit::getHashTypeFromEnum(const HashType type) {
   switch (type) {
     case MD5:
@@ -72,6 +96,21 @@ const EVP_CIPHER * OpenSSLToolkit::getEncryptBitsFromEnum(const EncryptBits bits
   }
 }
 
+std::expected<unsigned char *, std::string> OpenSSLToolkit::genBytes(const int count) {
+  unsigned char* bytes = malloc(sizeof(unsigned char) * count);
+  if (RAND_bytes(bytes, count) != 1) {
+    return std::unexpected(oerr);
+  }
+  return bytes;
+}
+
+std::vector<std::byte> OpenSSLToolkit::toByteVec(const unsigned char *data, const int size) {
+  return std::vector<std::byte>(
+  reinterpret_cast<const std::byte*>(data),
+  reinterpret_cast<const std::byte*>(data + size)
+  );
+}
+
 std::expected<OpenSSLToolkit::byteVec, std::string> OpenSSLToolkit::Hash(const byteVec &data, const HashType type) {
   const md_ctx_ptr ctx = make_md_ctx_ptr(EVP_MD_CTX_new());
   const auto md = getHashTypeFromEnum(type);
@@ -82,10 +121,46 @@ std::expected<OpenSSLToolkit::byteVec, std::string> OpenSSLToolkit::Hash(const b
   if (EVP_DigestUpdate(ctx.get(), data.data(), data.size()) != 1) {
     return std::unexpected(oerr);
   }
-  if (EVP_DigestFinal_ex(ctx.get(), reinterpret_cast<unsigned char *>(out.data()), nullptr) != 1) {
+  if (EVP_DigestFinal_ex(ctx.get(), toOpenSSL(out), nullptr) != 1) {
     return std::unexpected(oerr);
   }
   return out;
 }
 
-
+std::expected<OpenSSLToolkit::byteVec, std::string> OpenSSLToolkit::Encrypt(std::optional<std::reference_wrapper<byteVec>> key,
+                                                                            std::optional<std::reference_wrapper<byteVec>> initVec, byteVec &data, const EncryptBits bits) {
+  int keySize = EVP_CIPHER_key_length(getEncryptBitsFromEnum(bits));
+  if (!key.has_value()) {
+    auto _k = genBytes(keySize);
+    if (!_k) {
+      return std::unexpected(_k.error());
+    }
+    key->get() = toByteVec(_k.value(), keySize);
+  }
+  if (!initVec.has_value()) {
+    auto _iv = genBytes(IV_LEN);
+    if (!_iv) {
+      return std::unexpected(_iv.error());
+    }
+    initVec->get() = toByteVec(_iv.value(), IV_LEN);
+  }
+  const unsigned char* iv = toOpenSSL(initVec->get());
+  const unsigned char* k = toOpenSSL(key->get());
+  const unsigned char* in = toOpenSSL(data);
+  auto ctx = make_cipher_ctx_ptr(EVP_CIPHER_CTX_new());
+  int len1, len2;
+  if (EVP_EncryptInit_ex(ctx.get(), getEncryptBitsFromEnum(bits), nullptr, k, iv) != 1) {
+    return std::unexpected(oerr);
+  }
+  unsigned char* out = static_cast<unsigned char *>(malloc(
+    sizeof(unsigned char) * data.size() + EVP_CIPHER_block_size(getEncryptBitsFromEnum(bits))));
+  if (EVP_EncryptUpdate(ctx.get(), out, &len1, in, data.size()) != 1) {
+    return std::unexpected(oerr);
+  }
+  if (EVP_EncryptFinal_ex(ctx.get(), out + len1, &len2) != 1) {
+    return std::unexpected(oerr);
+  }
+  byteVec ciphertext = toByteVec(out, len1 + len2);
+  free(out);
+  return ciphertext;
+}

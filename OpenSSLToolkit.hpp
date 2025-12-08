@@ -13,6 +13,8 @@
 #include <concepts>
 #include <cstring>
 #include <optional>
+#include <openssl/rand.h>
+#include <iostream>
 #ifndef oerr
 #ifdef _MSC_VER
 #define oerr openssl_error(__FUNCSIG__, __FILE__, __LINE__)
@@ -21,7 +23,7 @@
 #endif
 #endif
 constexpr int ERROR_BUFFER_LEN = 512;
-
+constexpr int IV_LEN = 16;
 namespace {
   template<typename V>
   concept Vector = requires(V v) {
@@ -58,19 +60,29 @@ private:
     std::memcpy(bytes.data(), vec.data(), bytes.size());
     return bytes;
   }
+  [[nodiscard]] static std::vector<std::byte> toByteVec(const unsigned char* data, const int size);
   template<Vector V>
-  [[nodiscard]] static std::pair<unsigned char*, size_t> toOpenSSL(const V& vec) {
+  [[nodiscard]] static std::pair<unsigned char*, size_t> toOpenSSL_ex(const V& vec) {
     using T = typename V::value_type;
     return { reinterpret_cast<unsigned char*>(const_cast<T*>(vec.data())), vec.size() * sizeof(T) };
   }
 
+  template<Vector V>
+  [[nodiscard]] static unsigned char* toOpenSSL(const V& vec) {
+    using T = typename V::value_type;
+    return reinterpret_cast<unsigned char*>(const_cast<T*>(vec.data()));
+  }
+
+  [[nodiscard]] static unsigned char* takeBytesErase(unsigned char* data, int start, int count);
+  [[nodiscard]] static unsigned char* takeBytes(const unsigned char* data, int start, int count);
+  [[nodiscard]] static std::expected<unsigned char *, std::string> genBytes(int count);
   static const EVP_MD* getHashTypeFromEnum(const HashType type);
   static const EVP_CIPHER* getEncryptBitsFromEnum(const EncryptBits bits);
   OpenSSLToolkit() = delete;
   ~OpenSSLToolkit() = delete;
 public:
   static std::expected<byteVec, std::string> Hash(const byteVec &data, const HashType type);
-  static std::expected<byteVec, std::string> Encrypt(std::optional<byteVec&> key, std::optional<byteVec&> initVec, byteVec& data);
+  static std::expected<byteVec, std::string> Encrypt(std::optional<std::reference_wrapper<byteVec>> key, std::optional<std::reference_wrapper<byteVec>> initVec, byteVec& data, EncryptBits bits);
   // TODO: Implement Encryption (AES-CBC)
 };
 
