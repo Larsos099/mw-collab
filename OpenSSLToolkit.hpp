@@ -64,13 +64,22 @@ private:
   template<Vector V>
   [[nodiscard]] static std::pair<unsigned char*, size_t> toOpenSSL_ex(const V& vec) {
     using T = typename V::value_type;
+    static_assert(sizeof(T) == 1, "value_type must be 1 byte");
     return { reinterpret_cast<unsigned char*>(const_cast<T*>(vec.data())), vec.size() * sizeof(T) };
   }
 
   template<Vector V>
-  [[nodiscard]] static unsigned char* toOpenSSL(const V& vec) {
+[[nodiscard]] static const unsigned char* toOpenSSL(const V& vec) {
     using T = typename V::value_type;
-    return reinterpret_cast<unsigned char*>(const_cast<T*>(vec.data()));
+    static_assert(sizeof(T) == 1, "value_type must be 1 byte");
+    return reinterpret_cast<const unsigned char*>(vec.data());
+  }
+
+  template<Vector V>
+  [[nodiscard]] static unsigned char* toOpenSSL(V& vec) {
+    using T = typename V::value_type;
+    static_assert(sizeof(T) == 1, "value_type must be 1 byte");
+    return reinterpret_cast<unsigned char*>(vec.data());
   }
 
   [[nodiscard]] static unsigned char* takeBytesErase(unsigned char* data, int start, int count);
@@ -82,8 +91,8 @@ private:
   ~OpenSSLToolkit() = delete;
 public:
   static std::expected<byteVec, std::string> Hash(const byteVec &data, const HashType type);
-  static std::expected<byteVec, std::string> Encrypt(std::optional<std::reference_wrapper<byteVec>> key, std::optional<std::reference_wrapper<byteVec>> initVec, byteVec& data, EncryptBits bits);
-  // TODO: Implement Encryption (AES-CBC)
+  static std::expected<byteVec, std::string> Encrypt(std::optional<std::reference_wrapper<byteVec>> key, std::optional<std::reference_wrapper<byteVec>> initVec, const byteVec& data, EncryptBits bits);
+
 };
 
 

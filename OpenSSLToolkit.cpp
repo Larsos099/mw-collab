@@ -97,8 +97,9 @@ const EVP_CIPHER * OpenSSLToolkit::getEncryptBitsFromEnum(const EncryptBits bits
 }
 
 std::expected<unsigned char *, std::string> OpenSSLToolkit::genBytes(const int count) {
-  unsigned char* bytes = malloc(sizeof(unsigned char) * count);
+  unsigned char* bytes = new unsigned char[count];
   if (RAND_bytes(bytes, count) != 1) {
+    delete[] bytes;
     return std::unexpected(oerr);
   }
   return bytes;
@@ -127,40 +128,72 @@ std::expected<OpenSSLToolkit::byteVec, std::string> OpenSSLToolkit::Hash(const b
   return out;
 }
 
-std::expected<OpenSSLToolkit::byteVec, std::string> OpenSSLToolkit::Encrypt(std::optional<std::reference_wrapper<byteVec>> key,
-                                                                            std::optional<std::reference_wrapper<byteVec>> initVec, byteVec &data, const EncryptBits bits) {
-  int keySize = EVP_CIPHER_key_length(getEncryptBitsFromEnum(bits));
+std::expected<OpenSSLToolkit::byteVec, std::string>
+OpenSSLToolkit::Encrypt(std::optional<std::reference_wrapper<byteVec>> key,
+                        std::optional<std::reference_wrapper<byteVec>> initVec,
+                        const byteVec &data,
+                        const EncryptBits bits) {
+
+  const EVP_CIPHER* cipher = getEncryptBitsFromEnum(bits);
+  auto blockSize = EVP_CIPHER_block_size(cipher);
+  const int keySize = EVP_CIPHER_key_length(cipher);
+  const int ivLen   = EVP_CIPHER_iv_length(cipher);
+  unsigned char* k = nullptr;
+  unsigned char* iv = nullptr;
+  unsigned char* o = new unsigned char[data.size() + blockSize];
+  const unsigned char* d = toOpenSSL(data);
+  bool generatedKey = false;
+  bool generatedIV = false;
+  int len1, len2;
+  cipher_ctx_ptr ctx = make_cipher_ctx_ptr(EVP_CIPHER_CTX_new());
   if (!key.has_value()) {
-    auto _k = genBytes(keySize);
-    if (!_k) {
-      return std::unexpected(_k.error());
+    if (auto g = genBytes(keySize); !g) {
+      return std::unexpected(g.error());
+    } else {
+      generatedKey = true;
+      k = g.value();
     }
-    key->get() = toByteVec(_k.value(), keySize);
+  } else {
+    k = toOpenSSL(key->get());
   }
   if (!initVec.has_value()) {
-    auto _iv = genBytes(IV_LEN);
-    if (!_iv) {
-      return std::unexpected(_iv.error());
+    if (auto g = genBytes(ivLen); !g) {
+      return std::unexpected(g.error());
+    } else {
+      generatedIV = true;
+      iv = g.value();
     }
-    initVec->get() = toByteVec(_iv.value(), IV_LEN);
+  } else {
+    iv = toOpenSSL(initVec->get());
   }
-  const unsigned char* iv = toOpenSSL(initVec->get());
-  const unsigned char* k = toOpenSSL(key->get());
-  const unsigned char* in = toOpenSSL(data);
-  auto ctx = make_cipher_ctx_ptr(EVP_CIPHER_CTX_new());
-  int len1, len2;
-  if (EVP_EncryptInit_ex(ctx.get(), getEncryptBitsFromEnum(bits), nullptr, k, iv) != 1) {
+  auto cleanup = [&]() {
+    if (generatedKey) delete[] k;
+    if (generatedIV) delete[] iv;
+    delete[] o;
+  };
+  if (EVP_EncryptInit_ex(ctx.get(), cipher, nullptr, k, iv) != 1) {
+    cleanup();
     return std::unexpected(oerr);
   }
-  unsigned char* out = static_cast<unsigned char *>(malloc(
-    sizeof(unsigned char) * data.size() + EVP_CIPHER_block_size(getEncryptBitsFromEnum(bits))));
-  if (EVP_EncryptUpdate(ctx.get(), out, &len1, in, data.size()) != 1) {
+
+  if (EVP_EncryptUpdate(ctx.get(), o, &len1, d, data.size()) != 1) {
+    cleanup();
     return std::unexpected(oerr);
   }
-  if (EVP_EncryptFinal_ex(ctx.get(), out + len1, &len2) != 1) {
+
+  if (EVP_EncryptFinal_ex(ctx.get(), o + len1, &len2) != 1) {
+    cleanup();
     return std::unexpected(oerr);
   }
-  byteVec ciphertext = toByteVec(out, len1 + len2);
-  free(out);
-  return ciphertext;
+
+  byteVec final;
+  size_t totalSize = ivLen + len1 + len2 + (generatedKey ? keySize : 0);
+  final.resize(totalSize);
+  std::memcpy(final.data(), iv, ivLen);
+  std::memcpy(final.data() + ivLen, o, len1 + len2);
+  if (generatedKey) {
+    std::memcpy(final.data() + ivLen + len1 + len2, k, keySize);
+  }
+  cleanup();
+  return final;
 }
