@@ -23,7 +23,6 @@
 #endif
 #endif
 constexpr int ERROR_BUFFER_LEN = 512;
-constexpr int IV_LEN = 16;
 namespace {
   template<typename V>
   concept Vector = requires(V v) {
@@ -76,6 +75,13 @@ private:
   }
 
   template<Vector V>
+[[nodiscard]] static unsigned char* toOpenSSLMutable(V& vec) {
+    using T = typename V::value_type;
+    static_assert(sizeof(T) == 1, "value_type must be 1 byte");
+    return reinterpret_cast<unsigned char*>(vec.data());
+  }
+
+  template<Vector V>
   [[nodiscard]] static unsigned char* toOpenSSL(V& vec) {
     using T = typename V::value_type;
     static_assert(sizeof(T) == 1, "value_type must be 1 byte");
@@ -92,6 +98,7 @@ private:
 public:
   static std::expected<byteVec, std::string> Hash(const byteVec &data, const HashType type);
   static std::expected<byteVec, std::string> Encrypt(std::optional<std::reference_wrapper<byteVec>> key, std::optional<std::reference_wrapper<byteVec>> initVec, const byteVec& data, EncryptBits bits);
+  static std::expected<byteVec, std::string> Decrypt(const byteVec &key, const byteVec& data, EncryptBits bits);
 
 };
 

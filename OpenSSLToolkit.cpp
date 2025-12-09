@@ -197,3 +197,43 @@ OpenSSLToolkit::Encrypt(std::optional<std::reference_wrapper<byteVec>> key,
   cleanup();
   return final;
 }
+
+std::expected<OpenSSLToolkit::byteVec, std::string> OpenSSLToolkit::Decrypt(const byteVec &key, const byteVec &data, EncryptBits bits) {
+
+  byteVec dataMutable = data;
+  const EVP_CIPHER* cipher = getEncryptBitsFromEnum(bits);
+  auto blockSize = EVP_CIPHER_block_size(cipher);
+  const int keySize = EVP_CIPHER_key_length(cipher);
+  const int ivLen   = EVP_CIPHER_iv_length(cipher);
+  const unsigned char* k = toOpenSSL(key);
+  unsigned char* d = toOpenSSLMutable(dataMutable);
+  unsigned char* iv = takeBytes(d, 0, ivLen);
+  unsigned char* o = new unsigned char[data.size() + blockSize];
+  int len1, len2;
+  auto cleanup = [&]() {
+    delete[] o;
+  };
+
+  cipher_ctx_ptr ctx = make_cipher_ctx_ptr(EVP_CIPHER_CTX_new());
+  if (EVP_DecryptInit_ex(ctx.get(), cipher, nullptr, k, iv) != 1) {
+    cleanup();
+    return std::unexpected(oerr);
+  }
+
+  if (EVP_DecryptUpdate(ctx.get(), o, &len1, d + ivLen, data.size() - ivLen) != 1) {
+    cleanup();
+    return std::unexpected(oerr);
+  }
+
+  if (EVP_DecryptFinal_ex(ctx.get(), o + len1, &len2) != 1) {
+    cleanup();
+    return std::unexpected(oerr);
+  }
+
+  byteVec final;
+  size_t totalSize =  len1 + len2;
+  final.resize(totalSize);
+  std::memcpy(final.data(), o, totalSize);
+  cleanup();
+  return final;
+}
